@@ -1,5 +1,5 @@
 def main():
-    print("Hello from gui-tkinter!")
+    print("Hello from iluygliguyl iughl gui-tkinter!")
 
 
 if __name__ == "__main__":
