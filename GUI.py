@@ -13,6 +13,9 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from serial_manager import SerialManager, SerialConfig
 
+# Pillow for robust image loading + resizing (PNG/JPG/etc.)
+from PIL import Image, ImageTk
+
 
 class App(tk.Tk):
     def __init__(self, tick_ms: int = 100, scan_serial_ports: bool = True):
@@ -20,7 +23,7 @@ class App(tk.Tk):
 
         # ---------- Config ----------
         self.TICK_MS = int(tick_ms)
-        self.W = 1000
+        self.W = 1000   
         self.H = 500
 
         # Dark + orange theme
@@ -87,8 +90,8 @@ class App(tk.Tk):
     # ---------------- Layout ----------------
     def _build_layout(self):
         # Main container: left and right halves, each 500x500
-        self.left = tk.Frame(self, width=500, height=500, bg=self.COL_BG)
-        self.right = tk.Frame(self, width=500, height=500, bg=self.COL_BG)
+        self.left = tk.Frame(self, width=self.W/2, height=self.H/2, bg=self.COL_BG)
+        self.right = tk.Frame(self, width=self.W/2, height=self.H/2, bg=self.COL_BG)
         self.left.pack(side="left", fill="none")
         self.right.pack(side="right", fill="none")
         self.left.pack_propagate(False)
@@ -335,7 +338,17 @@ class App(tk.Tk):
         # Top: image canvas
         self.img_canvas = tk.Canvas(self.right, bg=self.COL_PANEL, highlightthickness=0)
         self.img_canvas.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
-        self._draw_demo_image()
+
+        # --- Image resize state ---
+        self.img_path = r"C:/Users/Daniel/OneDrive/Pictures/3800_full.PNG"
+        self._img_pil = None      # PIL image cached
+        self._img_tk = None       # ImageTk.PhotoImage reference (keep!)
+        self._img_overlay = "Top canvas image"
+        self._img_pad = 10        # padding inside canvas
+
+        self._load_image_once()
+        self.img_canvas.bind("<Configure>", self._on_img_canvas_resize)
+        self.after(0, self._render_image_to_canvas)  # first render after layout
 
         # Bottom: matplotlib plot embedded
         plot_frame = tk.Frame(self.right, bg=self.COL_PANEL)
@@ -359,23 +372,53 @@ class App(tk.Tk):
         self.mpl_canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
         self.mpl_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
-    def _draw_demo_image(self):
-        """
-        Image defined in code (simple pattern). Replace with your own image.
-        """
-        w, h = 480, 240
-        self.photo = tk.PhotoImage(width=w, height=h)
+    # ---------------- Image: load + resize-to-fit ----------------
+    def _load_image_once(self):
+        try:
+            self._img_pil = Image.open(self.img_path)
+        except Exception as e:
+            self._img_pil = None
+            self.img_canvas.delete("all")
+            self.img_canvas.create_text(
+                10, 10, anchor="nw",
+                fill=self.COL_TEXT,
+                text=f"Failed to load image:\n{e}"
+            )
 
-        self.photo.put("#101010", to=(0, 0, w, h))
-        for i in range(min(w, h)):
-            for t in range(3):
-                y = i + t
-                if 0 <= y < h:
-                    self.photo.put(self.COL_ACCENT, (i, y))
+    def _on_img_canvas_resize(self, _event):
+        # redraw whenever canvas is resized
+        self._render_image_to_canvas()
+
+    def _render_image_to_canvas(self):
+        if self._img_pil is None:
+            return
+
+        pad = int(self._img_pad)
+        cw = max(1, self.img_canvas.winfo_width() - 2 * pad)
+        ch = max(1, self.img_canvas.winfo_height() - 2 * pad)
+
+        iw, ih = self._img_pil.size
+        scale = min(cw / iw, ch / ih)  # "fit" inside bounds (keeps aspect)
+        new_w = max(1, int(iw * scale))
+        new_h = max(1, int(ih * scale))
+
+        # Resize with good quality
+        img_resized = self._img_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        self._img_tk = ImageTk.PhotoImage(img_resized)  # keep reference!
 
         self.img_canvas.delete("all")
-        self.img_canvas.create_image(10, 10, anchor="nw", image=self.photo)
-        self.img_canvas.create_text(10, h - 10, anchor="sw", fill=self.COL_TEXT, text="Top canvas image")
+
+        # Center in canvas
+        x = self.img_canvas.winfo_width() // 2
+        y = self.img_canvas.winfo_height() // 2
+        self.img_canvas.create_image(x, y, anchor="center", image=self._img_tk)
+
+        if self._img_overlay:
+            self.img_canvas.create_text(
+                10, 10, anchor="nw",
+                fill=self.COL_TEXT,
+                text=self._img_overlay
+            )
 
     # ---------------- Tick + Live Updates ----------------
     def on_tick(self):
